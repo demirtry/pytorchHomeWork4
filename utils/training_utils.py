@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import torchvision
 import torchvision.transforms as transforms
 import logging
 import time
+from utils.visualization_utils import plot_gradient_flow
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,7 +55,7 @@ def run_epoch(model, data_loader, criterion, optimizer=None, device='cpu', is_te
     return total_loss / len(data_loader), correct / total
 
 
-def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, device='cpu'):
+def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, device='cpu', plot_grad: bool=False, plot_path: str=None):
     """
     Запускает обучение
     :param model: модель
@@ -83,6 +85,10 @@ def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, device='c
         logger.info(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}')
         logger.info(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}')
         logger.info('-' * 50)
+
+        # делаю график градиентов для слоев при необходимости
+        if plot_grad and (epoch + 1) % 2 == 0:
+            plot_gradient_flow(model.named_parameters(), path=f"{plot_path}_Epoch_{epoch + 1}.png")
 
     return {
         'train_losses': train_losses,
@@ -131,6 +137,68 @@ def evaluate_model(model: torch.nn.Module, dataloader: DataLoader, device):
     inf_time = time.time() - start_time
     return torch.cat(all_preds), torch.cat(all_targets), inf_time
 
+
+def compute_receptive_field(kernel_sizes: list):
+    """
+    Вычисляет рецептивное поле для последовательности conv слоев с одинаковыми параметрами.
+    :param kernel_sizes: список размеров ядер
+    """
+    strides = [1] * len(kernel_sizes)
+    rf = 1
+    jump = 1
+    for k, s in zip(kernel_sizes, strides):
+        rf = rf + (k - 1) * jump
+        jump *= s
+    return rf
+
+
+def get_batch(model, loader, device, num_images=4):
+    """Возвращает первые num изображений из даталоадера"""
+    model.eval()
+    imgs, _ = next(iter(loader))
+    imgs = imgs[:num_images].to(device)
+
+    return imgs
+
+
+def get_first_layer_model_activations(model, batch):
+    """Сохраняет активации первого conv-слоя для первых num изображений"""
+    with torch.no_grad():
+        activations = F.relu(model.conv1(batch))  # [B, C, H, W]
+    activations = activations.cpu().numpy()
+
+    return activations
+
+
+def get_model_activations(model, loader, device, num_images=4, first_layer=False, residual=False):
+    """Сохраняет активации первого conv-слоя для первых num изображений"""
+
+    batch = get_batch(model, loader, device, num_images)
+
+    if first_layer:
+        return get_first_layer_model_activations(model, batch)
+
+    activations = []
+    x = batch
+    if residual:
+        x = model.conv1(x)
+        x = model.bn1(x)
+        x = F.relu(x)
+        activations.append(x.detach().cpu())
+        for res_block in (model.res1, model.res2, model.res3):
+            x = res_block(x)
+            activations.append(x.detach().cpu())
+        return activations
+
+    for layer in model.modules():
+        if isinstance(layer, torch.nn.Conv2d):
+            x = layer(x)
+            x = torch.relu(x)
+            activations.append(x.detach().cpu())
+        elif isinstance(layer, torch.nn.MaxPool2d) or isinstance(layer, torch.nn.AdaptiveAvgPool2d):
+            x = layer(x)
+
+    return activations
 
 
 class MNISTDataset(Dataset):
