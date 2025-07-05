@@ -102,3 +102,50 @@ def plot_gradient_flow(named_parameters, path: str, title: str = 'Gradient Flow'
     plt.tight_layout()
     plt.savefig(path)
     plt.close(fig)
+
+
+def visualize_first_layer_activations(activations, path, num_images=4, n_filters=6):
+    """Сохраняет активации первого conv-слоя для первых num изображений"""
+
+    fig, axes = plt.subplots(num_images, n_filters, figsize=(n_filters * 1.5, num_images * 1.5))
+
+    for img_idx in range(num_images):
+        for filter_idx in range(n_filters):
+            ax = axes[img_idx, filter_idx]
+            ax.imshow(activations[img_idx, filter_idx], cmap='viridis')
+            ax.axis('off')
+
+        axes[img_idx, 0].set_ylabel(f'Img {img_idx + 1}', rotation=0, ha='right', va='center')
+
+    plt.suptitle(f'First Layer Activations', y=1.02)
+    plt.tight_layout()
+    plt.savefig(path, bbox_inches='tight', pad_inches=0.1)
+    plt.close(fig)
+
+
+def plot_feature_maps(activations, path: str, max_channels: int = 6):
+    """
+    Визуализирует первые max_channels feature maps каждого слоя в одной сводной картинке.
+
+    :param activations: список активаций после каждого слоя
+    :param path: путь для сохранения изображения
+    :param max_channels: сколько каналов отобразить для каждого слоя
+    """
+
+    num_layers = len(activations)
+    C = min(max_channels, min(feat.shape[1] for feat in activations))
+
+    fig, axes = plt.subplots(num_layers, C,
+                             figsize=(C * 1.5, num_layers * 1.5),
+                             squeeze=False)
+
+    # Берём всегда первый пример в батче
+    for layer_idx, feat in enumerate(activations):
+        for j in range(C):
+            axes[layer_idx][j].imshow(feat[0, j], cmap='viridis')
+            axes[layer_idx][j].axis('off')
+
+    plt.suptitle("Feature Map")
+    plt.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+    plt.savefig(f"{path}.png")
+    plt.close(fig)
